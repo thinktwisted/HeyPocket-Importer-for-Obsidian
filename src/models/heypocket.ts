@@ -330,6 +330,10 @@ function normTakeaways(raw: unknown): string[] {
 
 function normActionItems(raw: unknown): HpActionItem[] {
 	const out: HpActionItem[] = [];
+	if (isRecord(raw)) {
+		// Wrapper shape used by v2 payloads: { version, actionItems: [...] }.
+		return normActionItems(raw.actionItems ?? raw.items ?? raw.tasks ?? raw.todos);
+	}
 	if (!Array.isArray(raw)) return out;
 	for (const item of raw) {
 		if (typeof item === "string") {
@@ -341,7 +345,7 @@ function normActionItems(raw: unknown): HpActionItem[] {
 		const text = firstStr(item, ["text", "content", "title", "description", "task", "action"]);
 		if (!text) continue;
 		const ai: HpActionItem = { text };
-		if (item.done === true || item.completed === true) ai.done = true;
+		if (item.done === true || item.completed === true || item.isCompleted === true || item.is_completed === true) ai.done = true;
 		const status = firstStr(item, ["status", "state"]).toLowerCase();
 		if (status === "done" || status === "completed") ai.done = true;
 		const dueIso = toIsoDate(item.due ?? item.due_date ?? item.dueDate ?? item.deadline);
@@ -375,11 +379,46 @@ function normSpeakers(raw: unknown): Record<string, string> {
 	return map;
 }
 
+/** Keys that mark a record as an actual summarization entry vs an id-keyed map. */
+const SUMMARIZATION_KEYS = [
+	"summary", "summaries", "text", "content", "markdown", "body", "sections", "parts", "v2",
+	"key_takeaways", "keyTakeaways", "takeaways", "highlights",
+	"action_items", "actionItems", "todos", "tasks", "nextSteps", "next_steps",
+];
+
+function looksLikeSummarization(rec: Record<string, unknown>): boolean {
+	return SUMMARIZATION_KEYS.some((k) => rec[k] !== undefined && rec[k] !== null);
+}
+
+/** Accepts an array, a single entry object, or an id-keyed dictionary of entries. */
+function consumeSummarizations(value: unknown, acc: SummarizationAcc): void {
+	if (Array.isArray(value)) {
+		for (const entry of value) consumeSummarization(entry, acc);
+		return;
+	}
+	if (!isRecord(value)) return;
+	if (looksLikeSummarization(value)) consumeSummarization(value, acc);
+	else for (const entry of Object.values(value)) consumeSummarization(entry, acc);
+}
+
+interface SummarizationAcc {
+	summary: string[];
+	takeaways: unknown[];
+	actions: unknown[];
+}
+
 /** Pull summary/takeaways/action items out of a summarization entry. */
-function consumeSummarization(entry: unknown, acc: { summary: string[]; takeaways: unknown[]; actions: unknown[] }): void {
+function consumeSummarization(entry: unknown, acc: SummarizationAcc): void {
 	if (!isRecord(entry)) return;
 	const summaryText = firstStr(entry, ["summary", "fullSummary", "full_summary", "text", "content", "markdown", "body"]);
 	if (summaryText) acc.summary.push(summaryText);
+	// v2 payload: summary is an object with `markdown` + `bulletPoints`.
+	if (isRecord(entry.summary)) {
+		const md = firstStr(entry.summary, ["markdown", "text", "content", "body"]);
+		if (md) acc.summary.push(md);
+		const bp = entry.summary.bulletPoints ?? entry.summary.bullet_points ?? entry.summary.keyTakeaways ?? entry.summary.key_takeaways;
+		if (bp !== undefined) acc.takeaways.push(bp);
+	}
 	const sections = entry.sections ?? entry.parts;
 	if (Array.isArray(sections)) {
 		for (const section of sections) {
@@ -394,9 +433,8 @@ function consumeSummarization(entry: unknown, acc: { summary: string[]; takeaway
 	if (tk !== undefined) acc.takeaways.push(tk);
 	const ai = entry.action_items ?? entry.actionItems ?? entry.todos ?? entry.tasks ?? entry.nextSteps ?? entry.next_steps;
 	if (ai !== undefined) acc.actions.push(ai);
-	if (Array.isArray(entry.summarizations)) {
-		for (const nested of entry.summarizations) consumeSummarization(nested, acc);
-	}
+	if (isRecord(entry.v2)) consumeSummarization(entry.v2, acc);
+	consumeSummarizations(entry.summarizations, acc);
 }
 
 /** Normalize one raw HeyPocket recording object. Throws on garbage input. */
@@ -438,13 +476,8 @@ export function normalizeRecording(input: unknown, source: ImportSource): HpReco
 		segments = normSegments(transcript, speakers);
 	}
 
-	const acc = { summary: [] as string[], takeaways: [] as unknown[], actions: [] as unknown[] };
-	const summarizations = raw.summarizations ?? raw.summarization;
-	if (Array.isArray(summarizations)) {
-		for (const entry of summarizations) consumeSummarization(entry, acc);
-	} else if (isRecord(summarizations)) {
-		consumeSummarization(summarizations, acc);
-	}
+	const acc: SummarizationAcc = { summary: [], takeaways: [], actions: [] };
+	consumeSummarizations(raw.summarizations ?? raw.summarization, acc);
 	// Top-level `summary` string (MCP / simple exports).
 	const topSummary = firstStr(raw, ["summary", "aiSummary", "ai_summary"]);
 	if (topSummary) acc.summary.unshift(topSummary);
