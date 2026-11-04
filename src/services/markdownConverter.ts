@@ -61,8 +61,78 @@ function sanitizeText(value: string, trusted: boolean): string {
 	return trusted ? cleaned : scrubEmbeds(cleaned);
 }
 
+/* ---- HeyPocket rich blocks: <pocket:chart>, <pocket:timeline>, ... ---- *
+ * The AI summary embeds custom tags Obsidian cannot render; convert them to
+ * native Mermaid diagrams (pie / timeline) or Markdown tables as fallback.  */
+
+const POCKET_BLOCK = /<pocket:([a-z0-9][\w-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/pocket:\1>/gi;
+const POCKET_TAG_REMNANTS = /<\/?pocket:[^>]*>/gi;
+
+function pocketAttr(attrs: string, name: string): string {
+	const m = new RegExp(`${name}\\s*=\\s*"([^"]*)"`, "i").exec(attrs);
+	return m ? m[1] : "";
+}
+
+/** Neutralize colons: mermaid timeline uses them as field separators. */
+function tlText(value: string): string {
+	return value.replace(/:/g, "\u2236");
+}
+
+function pocketTable(rows: string[][], header: string[]): string {
+	const width = Math.max(header.length, ...rows.map((r) => r.length));
+	const cell = (v: string | undefined) => (v ?? "").replace(/\|/g, "\\|");
+	const lines = [`| ${header.join(" | ")} |`, `| ${header.map(() => "---").join(" | ")} |`];
+	for (const r of rows) {
+		const cols: string[] = [];
+		for (let i = 0; i < width; i++) cols.push(cell(r[i]));
+		lines.push(`| ${cols.join(" | ")} |`);
+	}
+	return lines.join("\n");
+}
+
+function pocketBlock(type: string, attrs: string, inner: string): string {
+	const title = pocketAttr(attrs, "title");
+	const caption = title !== "" ? `**${title.replace(/\|/g, "\\|")}**\n\n` : "";
+	const rows = inner
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.filter((l) => l !== "")
+		.map((l) => l.split(/\s*\|\s*/).map((c) => c.trim()));
+	if (rows.length === 0) return "";
+	const kind = type.toLowerCase();
+	if (kind === "chart") {
+		const chartType = pocketAttr(attrs, "type").toLowerCase();
+		const numeric = rows.every((r) => r.length >= 2 && r[1] !== "" && isFinite(Number(r[1])));
+		const colors = rows.map((r) => r[2] ?? "");
+		if (chartType === "pie" && numeric) {
+			const colorOk = colors.every((c) => /^#[0-9a-f]{6}$/i.test(c));
+			const init = colorOk ? `%%{init: {"themeVariables": {${colors.map((c, i) => `"pie${i + 1}": "${c}"`).join(", ")}}}}%%\n` : "";
+			const series = rows.map((r) => `  "${r[0].replace(/"/g, "'")}" : ${Number(r[1])}`).join("\n");
+			return `${caption}\`\`\`mermaid\n${init}pie showData\n${series}\n\`\`\``;
+		}
+		return `${caption}${pocketTable(rows, ["Item", "Value", "Color"])}`;
+	}
+	if (kind === "timeline" && rows.every((r) => r.length >= 2 && r[0] !== "")) {
+		const body = rows.map((r) => `  ${tlText(r[0])} : ${r.slice(1).map(tlText).join(" — ")}`).join("\n");
+		return `${caption}\`\`\`mermaid\ntimeline\n${body}\n\`\`\``;
+	}
+	return `${caption}${rows.map((r) => `- ${r.join(" — ")}`).join("\n")}`;
+}
+
+function renderPocketEmbeds(value: string): string {
+	return value
+		.replace(POCKET_BLOCK, (_m, type: string, attrs: string, inner: string) => {
+			try {
+				return pocketBlock(type, attrs, inner);
+			} catch {
+				return "";
+			}
+		})
+		.replace(POCKET_TAG_REMNANTS, "");
+}
+
 function inlineText(value: string, trusted = true): string {
-	return sanitizeText(value, trusted).replace(/\s*\r?\n\s*/g, " ").trim();
+	return renderPocketEmbeds(sanitizeText(value, trusted)).replace(/\s*\r?\n\s*/g, " ").trim();
 }
 
 function buildFrontmatter(rec: HpRecording, opts: ConvertOptions): string {
@@ -94,7 +164,7 @@ function buildFrontmatter(rec: HpRecording, opts: ConvertOptions): string {
 /** Wrap multi-paragraph text into an Obsidian blockquote callout body. */
 function calloutLines(kind: string, title: string, body: string, trusted = true): string[] {
 	const lines: string[] = [`> [!${kind}] ${inlineText(title, trusted)}`];
-	const paragraphs = sanitizeText(body, trusted)
+	const paragraphs = renderPocketEmbeds(sanitizeText(body, trusted))
 		.replace(/\r\n?/g, "\n")
 		.split(/\n{2,}/)
 		.map((p) => p.trim())

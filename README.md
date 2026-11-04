@@ -5,7 +5,7 @@ Import [HeyPocket (Pocket AI)](https://heypocket.com) recordings into your Obsid
 Each note gets:
 
 - YAML frontmatter: `id`, `title`, `date`, `language`, `tags`
-- An **AI Summary** callout (`> [!summary]`)
+- An **AI Summary** callout (`> [!summary]`) — HeyPocket's `<pocket:chart>` / `<pocket:timeline>` blocks are converted to native Mermaid pie/timeline diagrams (or Markdown tables when the data shape doesn't fit), so they render properly instead of showing as raw tags (timeline diagrams need Obsidian 1.5+, which ships Mermaid's `timeline` support)
 - **Key Takeaways** bullets
 - **Action Items** as task checkboxes (`- [ ]` / `- [x]`, with due date / assignee when present)
 - A **timestamped transcript** (`0:05:12`-style offsets, speaker-labeled when available)
