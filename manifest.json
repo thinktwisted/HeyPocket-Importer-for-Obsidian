@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-heypocket-importer",
+  "name": "HeyPocket Importer",
+  "version": "1.0.0",
+  "minAppVersion": "1.1.0",
+  "description": "Import HeyPocket (Pocket AI) recordings into your vault as Markdown notes with frontmatter, AI summaries, key takeaways, action-item tasks, and timestamped transcripts — via the public API, JSON files, Markdown exports, or ZIP archives.",
+  "author": "John N.",
+  "authorUrl": "https://github.com/johnn",
+  "isDesktopOnly": false
+}

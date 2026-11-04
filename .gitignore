@@ -1,0 +1,25 @@
+# build output (main.js IS intentionally committed for direct install)
+node_modules/
+main.js.map
+dist/
+
+# Obsidian vault / plugin state — NEVER commit: data.json holds the API key
+.obsidian/
+.trash/
+data.json
+*.data.json
+.env
+
+# throwaway harness scaffolds
+scripts/
+.smoke/
+
+# OS / editor / misc
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.log
+.svn/
+TODO.md

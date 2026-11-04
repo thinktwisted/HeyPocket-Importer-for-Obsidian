@@ -1,0 +1,43 @@
+/*
+ * obsidian-heypocket-importer styles.
+ * Imported notes use standard Obsidian callouts ([!summary], [!info],
+ * [!quote]); this file only polishes settings-tab surfaces and gives the
+ * AI Summary callout a HeyPocket accent.
+ */
+
+.heypocket-setting-desc {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-top: calc(var(--size-4-1) * -1);
+	margin-bottom: var(--size-4-2);
+}
+
+.heypocket-template-preview {
+	color: var(--text-faint);
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	background: var(--background-secondary);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	padding: var(--size-4-1) var(--size-4-2);
+	margin-bottom: var(--size-4-2);
+}
+
+.heypocket-modal-hint {
+	color: var(--text-muted);
+	margin-top: 0;
+}
+
+/* Accent for the AI Summary callout inside imported notes. */
+.markdown-rendered .callout[data-callout="summary"] > .callout-title .callout-icon > svg {
+	color: var(--text-accent);
+}
+
+.markdown-rendered .callout.heypocket-summary {
+	--callout-color: 108, 99, 255;
+}
+
+/* Compact transcript lines in reading view. */
+.markdown-rendered li code:has(+ strong) {
+	margin-right: var(--size-4-1);
+}
