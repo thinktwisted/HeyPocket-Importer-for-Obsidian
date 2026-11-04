@@ -1,7 +1,8 @@
 {
   "name": "obsidian-heypocket-importer",
   "version": "1.0.0",
-  "description": "Import HeyPocket (Pocket AI) recordings into an Obsidian vault as Markdown notes via the public API, JSON exports, or ZIP archives.",
+  "description": "Import HeyPocket (Pocket AI) recordings into an Obsidian vault as Markdown notes via the public API, JSON/Markdown exports, or ZIP archives.",
+  "repository": "https://github.com/thinktwisted/HeyPocket-Importer-for-Obsidian",
   "private": true,
   "main": "main.js",
   "keywords": [
