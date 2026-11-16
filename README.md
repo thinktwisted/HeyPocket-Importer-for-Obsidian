@@ -54,7 +54,7 @@ Base URL defaults to `https://public.heypocketai.com/api/v1`.
 | Target folder | Vault-relative destination; sanitized (`..`, illegal chars stripped) |
 | Filename template | Tokens `{{title}} {{date}} {{year}} {{month}} {{day}} {{id}}`; missing tokens render empty (dateless exports keep a stable name); rendered name is sanitized |
 | Auto-tags | Extra comma-separated tags merged into every note's `tags` |
-| Overwrite policy | `skip` / `overwrite` / `rename` when the target note exists. `overwrite` only replaces notes this plugin wrote (frontmatter `id:`); foreign notes are never clobbered — a numbered copy is saved instead |
+| Overwrite policy | `skip` / `overwrite` / `rename` when the note already exists. Existing notes are located **vault-wide by their frontmatter `id:`**, so a note you moved or renamed inside the vault is found and honored — it is updated in place (`overwrite`), skipped (`skip`), or copied (`rename`), never re-downloaded to a second file. `overwrite` only replaces notes this plugin wrote; foreign notes are never clobbered — a numbered copy is saved instead |
 | Max recordings per sync | Cap for one API run (1–1000) |
 | Include transcript | Toggle the Transcript section off for summary-only notes |
 | Start/End date, Tag IDs | Filters for the listing endpoint |
@@ -62,7 +62,7 @@ Base URL defaults to `https://public.heypocketai.com/api/v1`.
 ## Security notes
 
 - All file paths are sanitized: invalid characters removed, traversal (`..`) and absolute paths flattened, so crafted exports cannot crash the vault or write outside the target folder.
-- The `overwrite` policy checks the existing file's frontmatter and refuses to replace notes it did not create (its own notes carry a quoted `id:` key).
+- The `overwrite` policy checks the existing file's frontmatter and refuses to replace notes it did not create (its own notes carry a quoted `id:` key). Notes you move elsewhere in the vault are tracked by that `id:` and updated in place on the next sync instead of being imported twice.
 - Embeds (`![[…]]`) and remote images from imported JSON/ZIP/Markdown files are stripped from note bodies — a crafted export cannot pull vault content or phone home when you read the note. Content synced from your own HeyPocket API account is written as-is.
 - Only files that look like HeyPocket exports import: Markdown needs speaker blocks, action-item checkboxes, or export section headings — random notes are rejected with an error, not imported.
 - ZIP archives are vetted from their central directory *before* decompression: ≤500 importable entries and ≤64 MB declared expanded size; archives whose structure cannot be verified (including exotic zip64 layouts) are declined instead of inflated.

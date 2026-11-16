@@ -92,7 +92,7 @@ export default class HeyPocketImporterPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
-		this.writer = new NoteWriter(this.app.vault);
+		this.writer = new NoteWriter(this.app.vault, this.app.metadataCache);
 
 		this.addSettingTab(new HeyPocketSettingTab(this.app, this));
 

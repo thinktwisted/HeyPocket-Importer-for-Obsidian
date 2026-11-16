@@ -25,9 +25,14 @@ import {
 	mdSlugFromFileName,
 	parseHeyPocketMarkdown,
 } from "../models/heypocket";
-import { convertRecordingToMarkdown } from "./markdownConverter";
+import { convertRecordingToMarkdown, yamlString } from "./markdownConverter";
 
 export type OverwritePolicy = "skip" | "overwrite" | "rename";
+
+/** Structural subset of Obsidian's MetadataCache (injectable for tests). */
+export interface FrontmatterCacheLike {
+	getFileCache(file: TFile): { frontmatter?: Record<string, unknown> } | null;
+}
 
 export interface ImportOptions {
 	folder: string;
@@ -332,7 +337,7 @@ async function parseMarkdownVaultFile(vault: Vault, file: TFile): Promise<Parsed
 }
 
 export class NoteWriter {
-	constructor(private vault: Vault) {}
+	constructor(private vault: Vault, private cache?: FrontmatterCacheLike) {}
 
 	/** Create each missing segment of `folderPath` (already sanitized). */
 	private async ensureFolder(folderPath: string): Promise<void> {
@@ -365,16 +370,59 @@ export class NoteWriter {
 		return normalizePath(`${stem} (imported-${Date.now()}).md`);
 	}
 
-	/** True when the frontmatter carries a quoted `id:` key — only we write those. */
-	private async isPluginNote(file: TFile): Promise<boolean> {
+	/** The file's quoted frontmatter `id:` value (escaped form), or null. */
+	private async pluginNoteId(file: TFile): Promise<string | null> {
 		let head: string;
 		try {
 			head = (await this.vault.read(file)).slice(0, 4000);
 		} catch {
-			return false;
+			return null;
 		}
 		const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(head);
-		return frontmatter !== null && /^id:[ \t]*"[^"]*"/m.test(frontmatter[1]);
+		if (frontmatter === null) return null;
+		const quoted = /^id:[ \t]*"((?:[^"\\]|\\.)*)"/m.exec(frontmatter[1]);
+		return quoted === null ? null : quoted[1];
+	}
+
+	private async isPluginNote(file: TFile): Promise<boolean> {
+		return (await this.pluginNoteId(file)) !== null;
+	}
+
+	/** id → files whose CACHED frontmatter id is that string (cheap, no I/O). */
+	private idIndex(): Map<string, TFile[]> | null {
+		if (this.cache === undefined) return null;
+		const map = new Map<string, TFile[]>();
+		for (const file of this.vault.getMarkdownFiles()) {
+			const id = this.cache.getFileCache?.(file)?.frontmatter?.id;
+			if (typeof id !== "string" || id === "") continue;
+			const list = map.get(id);
+			if (list === undefined) map.set(id, [file]);
+			else list.push(file);
+		}
+		return map;
+	}
+
+	/**
+	 * The note that currently holds this recording, wherever it lives: notes
+	 * the user moved (or renamed) out of the target folder must be found and
+	 * updated in place, never re-downloaded. Cache hits are verified against
+	 * the file's actual quoted `id:` so foreign notes with a bare `id:` in
+	 * their frontmatter are never hijacked.
+	 */
+	private async findOwnedNote(
+		index: Map<string, TFile[]> | null,
+		rec: HpRecording,
+		folder: string,
+		preferredPath: string
+	): Promise<TFile | null> {
+		if (index === null || rec.id === "") return null;
+		const escaped = yamlString(rec.id).slice(1, -1);
+		let best: TFile | null = null;
+		for (const candidate of index.get(rec.id) ?? []) {
+			if ((await this.pluginNoteId(candidate)) !== escaped) continue;
+			if (best === null || betterHome(candidate, best, folder, preferredPath)) best = candidate;
+		}
+		return best;
 	}
 
 	async importRecordings(recordings: HpRecording[], options: ImportOptions): Promise<ImportReport> {
@@ -385,6 +433,7 @@ export class NoteWriter {
 		} catch (error) {
 			throw new Error(`Cannot create target folder "${folder || "vault root"}": ${errorMessage(error)}`);
 		}
+		const index = this.idIndex();
 
 		for (let i = 0; i < recordings.length; i++) {
 			const rec = recordings[i];
@@ -393,25 +442,49 @@ export class NoteWriter {
 					extraTags: options.extraTags,
 					includeTranscript: options.includeTranscript,
 				});
-				let path = this.targetPath(folder, rec, options.filenameTemplate);
-				const existing = path === "" ? null : this.vault.getAbstractFileByPath(path);
+				const path = this.targetPath(folder, rec, options.filenameTemplate);
+				const atTarget = path === "" ? null : this.vault.getAbstractFileByPath(path);
+				const existing = atTarget instanceof TFile ? atTarget : null;
+				const home = await this.findOwnedNote(index, rec, folder, path);
 
-				if (existing instanceof TFile) {
+				if (home !== null) {
 					if (options.policy === "skip") {
 						report.skipped++;
 						continue;
 					}
-					if (options.policy === "overwrite" && (await this.isPluginNote(existing))) {
+					if (options.policy === "overwrite") {
+						await this.vault.modify(home, markdown);
+						report.updated++;
+						continue;
+					}
+					// rename policy: leave the original alone, write a fresh copy.
+					const variant = existing !== null ? this.freeVariant(path) : path;
+					await this.vault.create(variant, markdown);
+					if (existing !== null) report.renamed++;
+					else report.created++;
+					continue;
+				}
+
+				if (existing !== null) {
+					if (options.policy === "skip") {
+						report.skipped++;
+						continue;
+					}
+					const owned =
+						rec.id === ""
+							? await this.isPluginNote(existing)
+							: (await this.pluginNoteId(existing)) === yamlString(rec.id).slice(1, -1);
+					if (options.policy === "overwrite" && owned) {
 						await this.vault.modify(existing, markdown);
 						report.updated++;
 						continue;
 					}
-					path = this.freeVariant(path); // rename policy
-					await this.vault.create(path, markdown);
+					const variant = this.freeVariant(path); // rename, or another note sits here
+					await this.vault.create(variant, markdown);
 					report.renamed++;
 				} else {
-					if (existing) path = this.freeVariant(path); // a folder blocks the name
-					await this.vault.create(path, markdown);
+					const target = atTarget !== null ? this.freeVariant(path) : path; // a folder blocks the name
+					await this.vault.create(target, markdown);
 					report.created++;
 				}
 			} catch (error) {
@@ -425,6 +498,17 @@ export class NoteWriter {
 		}
 		return report;
 	}
+}
+
+/** Duplicate homes rank: oldest file (the original) first; the expected
+ * path, target folder, and shallowest/A-first path are deterministic ties. */
+function betterHome(a: TFile, b: TFile, folder: string, preferredPath: string): boolean {
+	if (a.stat.mtime !== b.stat.mtime) return a.stat.mtime < b.stat.mtime;
+	const tier = (f: TFile): number => (f.path === preferredPath ? 0 : folder !== "" && f.path.startsWith(folder + "/") ? 1 : 2);
+	const [ta, tb] = [tier(a), tier(b)];
+	if (ta !== tb) return ta < tb;
+	if (a.path.length !== b.path.length) return a.path.length < b.path.length;
+	return a.path < b.path;
 }
 
 export function formatImportReport(report: ImportReport): string {
